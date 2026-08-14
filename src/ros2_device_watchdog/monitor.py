@@ -8,7 +8,8 @@ from __future__ import annotations
 import logging
 import time
 
-from .models import DeviceConfig, DeviceState, DeviceStatus, NodeMonitor, TopicMonitor
+from .models import DeviceConfig, DeviceState, DeviceStatus
+from .monitors import NodeMonitor, TopicMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -174,24 +175,9 @@ class WatchdogMonitor:
         # 执行恢复
         state.last_recovery_time = now
         try:
-            import asyncio
-            loop = self._get_event_loop()
-            if loop and loop.is_running():
-                asyncio.ensure_future(self._recovery_callback(name), loop=loop)
-            else:
-                import asyncio
-                asyncio.run(self._recovery_callback(name))
+            self._recovery_callback(name)
         except Exception:
             logger.exception("%s: 恢复回调执行失败", name)
-
-    @staticmethod
-    def _get_event_loop():
-        """尝试获取当前事件循环。"""
-        try:
-            import asyncio
-            return asyncio.get_running_loop()
-        except RuntimeError:
-            return None
 
     def get_states(self) -> dict[str, DeviceState]:
         """返回所有设备的当前状态。"""
