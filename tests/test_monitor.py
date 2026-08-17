@@ -5,16 +5,16 @@
 
 from __future__ import annotations
 
+import pathlib
 import time
 import unittest
 from unittest.mock import MagicMock
 
 from src.ros2_device_watchdog.config import load_config, validate_config
+from src.ros2_device_watchdog.monitors import NodeMonitor, TopicMonitor
 from src.ros2_device_watchdog.models import (
     DeviceConfig,
     DeviceStatus,
-    NodeMonitor,
-    TopicMonitor,
 )
 from src.ros2_device_watchdog.monitor import (
     HYSTERSIS_OK_CONFIRM,
@@ -388,7 +388,7 @@ class TestConfig(unittest.TestCase):
 
     def test_load_config_file(self):
         """从文件加载配置。"""
-        configs = load_config("config/example.yaml")
+        configs = load_config(pathlib.Path(__file__).parent.parent / "config" / "example.yaml")
         self.assertGreaterEqual(len(configs), 2)
         self.assertIn("camera", configs)
         self.assertIn("robot_state", configs)
