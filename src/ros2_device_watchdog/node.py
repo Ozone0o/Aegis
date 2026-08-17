@@ -51,7 +51,7 @@ class WatchdogNode(rclpy.node.Node):
 
         # 创建 diagnostics 适配器
         self.diag_adapter = DiagnosticsAdapter(self.monitor)
-        self.updater: Updater = Updater()
+        self.updater: Updater = Updater(self)
         self.updater.setHardwareID("watchdog")
         self.diag_adapter.set_updater(self.updater)
 
@@ -88,9 +88,14 @@ def main(args: list[str] | None = None) -> None:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
+    except SystemExit:
+        pass
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        try:
+            node.destroy_node()
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

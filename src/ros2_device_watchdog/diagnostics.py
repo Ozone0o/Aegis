@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import logging
 
+from diagnostic_updater import DiagnosticStatusWrapper
+
 from .models import DeviceStatus
 from .monitor import WatchdogMonitor
 
@@ -21,7 +23,8 @@ class DiagnosticsAdapter:
 
     def __init__(self, monitor: WatchdogMonitor) -> None:
         self.monitor = monitor
-        self._updater = None  # 被 node.py 注入 diagnostic_updater
+        self._updater = None
+        self._tasks = {}
 
     def set_updater(self, updater) -> None:
         """设置 diagnostic_updater 实例。"""
@@ -34,41 +37,45 @@ class DiagnosticsAdapter:
 
         states = self.monitor.get_states()
         for name, state in states.items():
-            self._updater.push_fn(
-                self._make_diag_callback(name, state),
-                name,
-            )
+            status_level = self._status_to_diag_level(state.status)
+            message = self._make_diag_message(name, state)
 
-    def _make_diag_callback(self, name: str, state) -> callable:
-        """生成单个设备的 diagnostics 回调。"""
-        status_level = self._status_to_diag_level(state.status)
-        message = self._make_diag_message(name, state)
+            def make_callback(n, msg, level, st):
+                def callback(status):
+                    status.level = level
+                    status.name = n
+                    status.message = msg
+                    status.hardware_id = "watchdog"
+                    status.add("Device", n)
+                    status.add("Status", st.status.name)
+                    status.add("Last Message Age (s)", f"{st.last_message_age:.3f}")
+                    status.add("Current Hz", f"{st.current_hz:.2f}")
+                    status.add("Expected Rate", f"{st.config.expected_rate:.2f}")
+                    return status
+                return callback
 
-        def callback(diag):
-            diag.state = status_level
-            diag.message = message
-            # 添加关键指标
-            diag.add("Device", name)
-            diag.add("Status", state.status.name)
-            diag.add("Last Message Age (s)", f"{state.last_message_age:.3f}")
-            diag.add("Current Hz", f"{state.current_hz:.2f}")
-            diag.add("Expected Rate", f"{state.config.expected_rate:.2f}")
+            callback = make_callback(name, message, status_level, state)
 
-        return callback
+            if name in self._tasks:
+                self._updater.removeByName(name)
+            self._updater.add(name, callback)
+            self._tasks[name] = callback
+
+        self._updater.force_update()
 
     @staticmethod
-    def _status_to_diag_level(status: DeviceStatus) -> int:
+    def _status_to_diag_level(status: DeviceStatus) -> bytes:
         """将 DeviceStatus 映射到 diagnostics 状态码。
 
-        0 = OK, 1 = Warn, 2 = Error
+        0 = OK, 1 = Warn, 2 = Error (as bytes for ROS2)
         """
         mapping = {
-            DeviceStatus.OK: 0,
-            DeviceStatus.WARN: 1,
-            DeviceStatus.ERROR: 2,
-            DeviceStatus.RECOVERING: 1,
+            DeviceStatus.OK: b'\x00',
+            DeviceStatus.WARN: b'\x01',
+            DeviceStatus.ERROR: b'\x02',
+            DeviceStatus.RECOVERING: b'\x01',
         }
-        return mapping.get(status, 2)
+        return mapping.get(status, b'\x02')
 
     @staticmethod
     def _make_diag_message(name: str, state) -> str:
