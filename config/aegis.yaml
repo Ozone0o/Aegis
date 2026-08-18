@@ -1,0 +1,71 @@
+# Aegis example configuration.
+# The dry-run flag keeps this example safe to validate on a development host.
+apiVersion: aegis/v1
+interval: 1s
+
+recovery:
+  dry_run: true
+  cooldown: 30s
+  max_attempts: 3
+  hysteresis: 2
+
+checks:
+  camera_topic:
+    type: topic
+    target: /camera/image_raw
+    stale_timeout: 2s
+    expected_rate: 30
+
+  camera_node:
+    type: node
+    target: /camera_node
+
+  detector_node:
+    type: node
+    target: /detector_node
+
+  tracking_node:
+    type: node
+    target: /tracking_node
+
+  cpu:
+    type: resource
+    target: cpu
+    warning_threshold: 80
+    error_threshold: 95
+
+  root_disk:
+    type: resource
+    target: disk
+    path: /
+    warning_threshold: 80
+    error_threshold: 95
+
+policies:
+  - name: restart-camera-on-stale
+    when:
+      check: camera_topic
+      field: stale_age
+      operator: ">"
+      value: 2s
+    then:
+      type: restart_node
+      target: /camera_node
+      command: ["ros2", "lifecycle", "set", "{target}", "restart"]
+
+  - name: notify-tracking-dependency
+    when:
+      check: tracking_node
+      status: ERROR
+    then:
+      type: notify_operator
+      message: "Tracking is unavailable; inspect the root_cause in aegis events."
+
+dependencies:
+  detector_node: [camera_topic]
+  tracking_node: [detector_node]
+
+storage:
+  runtime_dir: .aegis
+  event_log: .aegis/events.jsonl
+  state_file: .aegis/state.json

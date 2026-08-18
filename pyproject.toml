@@ -3,12 +3,11 @@ requires = ["setuptools>=68.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ros2-device-watchdog"
-version = "0.1.0"
-description = "ROS2 device health monitoring tool"
+name = "aegis"
+version = "0.2.0"
+description = "Aegis runtime protection and recovery framework for ROS 2 robots"
 requires-python = ">=3.10"
 dependencies = [
-    "rclpy",
     "pyyaml",
 ]
 license = {text = "MIT"}
@@ -20,7 +19,7 @@ dev = [
 ]
 
 [project.scripts]
-watchdog = "ros2_device_watchdog.node:main"
+aegis = "aegis.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -31,3 +30,7 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

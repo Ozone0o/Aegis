@@ -1,25 +1,22 @@
-# ros2-device-watchdog 配置示例
-#
-# 此文件演示如何配置设备监控。
-# 每个设备需要指定类型、名称和监控参数。
+apiVersion: aegis/v1
+interval: 1s
 
-devices:
-  # 摄像头 Topic 监控
-  camera:
+recovery:
+  dry_run: true
+
+checks:
+  camera_topic:
     type: topic
-    topic: /camera/image_raw
-    stale_timeout: 1.0      # 超过 1 秒无消息则为 WARN
-    expected_rate: 30.0     # 期望频率 30 Hz
+    target: /camera/image_raw
+    stale_timeout: 1s
+    expected_rate: 30
 
-  # 机器人状态 Topic 监控
   robot_state:
     type: topic
-    topic: /robot/state
-    stale_timeout: 0.5      # 超过 0.5 秒无消息则为 WARN
-    expected_rate: 20.0     # 期望频率 20 Hz
+    target: /robot/state
+    stale_timeout: 500ms
+    expected_rate: 20
 
-  # Node 存在性监控
   navigation_node:
     type: node
-    node_name: navigation
-    stale_timeout: 2.0      # Node 消失超过 2 秒则为 WARN
+    target: /navigation

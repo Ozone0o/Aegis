@@ -1,4 +1,4 @@
-"""Demo: 演示 ros2-device-watchdog 的配置加载和设备校验。
+"""Demo: load a canonical Aegis configuration and run one health cycle.
 
 不依赖真实 ROS2 环境，直接加载配置文件并打印设备状态。
 
@@ -11,30 +11,26 @@ from __future__ import annotations
 import pathlib
 import sys
 
-from ros2_device_watchdog.config import load_config, validate_config
+from aegis.config import load_config
+from aegis.core import AegisCore
 
 
 def main() -> None:
     config_path = pathlib.Path(__file__).parent.parent / "config" / "example.yaml"
-    print("ros2-device-watchdog 配置加载演示")
+    print("Aegis 配置加载演示")
     print("=" * 50)
 
     try:
-        configs = load_config(config_path)
-    except FileNotFoundError as e:
-        print(f"错误: {e}", file=sys.stderr)
+        config = load_config(config_path)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"错误: {exc}", file=sys.stderr)
         sys.exit(1)
 
-    print(f"\n加载了 {len(configs)} 个设备配置:\n")
-    for name, cfg in configs.items():
-        print(f"  设备: {name}")
-        print(f"    类型: {cfg.type}")
-        if cfg.topic:
-            print(f"    Topic: {cfg.topic}")
-        if cfg.node_name:
-            print(f"    Node: {cfg.node_name}")
-        print(f"    超时阈值: {cfg.stale_timeout}s")
-        print(f"    预期频率: {cfg.expected_rate} Hz")
+    core = AegisCore(config)
+    result = core.tick()
+    print(f"\n加载了 {len(config.checks)} 项健康检查:\n")
+    for name, state in result.states.items():
+        print(f"  {name}: {state.status.value} — {state.message}")
         print()
 
 

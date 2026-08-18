@@ -1,147 +1,132 @@
-# ros2-device-watchdog
+# Aegis
 
-ROS2 设备健康监控工具。
+**Aegis is a runtime protection and recovery framework for ROS 2 robots.**
 
-监控摄像头 Topic、机器人状态 Topic、Node 是否存在，及时发现异常并通知。
+Its job is bigger than a watchdog:
 
-## 最小示例
-
-### 安装
-
-```bash
-cd ros2-device-watchdog
-pip install -e .
-# 或在 ROS2 工作空间中：
-colcon build --packages-select ros2_device_watchdog
+```text
+Observe → Detect → Decide → Recover
 ```
 
-### 创建 YAML 配置
+Aegis continuously evaluates robot health, applies declarative policies, and
+records the reason for every state transition and recovery attempt.
+
+## Capabilities
+
+- health checks for `topic`, `node`, `process`, `hardware`, and `resource`;
+- explicit `OK`, `WARNING`, `ERROR`, and `RECOVERING` states;
+- policy rules in `aegis.yaml`;
+- restart node, restart launch, execute command, notify operator, and safe shutdown actions;
+- dependency-aware root-cause propagation;
+- structured event history and persisted status snapshots;
+- ROS-independent core that is straightforward to test or embed.
+
+## Install and run
+
+```bash
+cd <checkout>
+pip install -e .
+
+# In a ROS 2 environment, install ROS dependencies with rosdep/apt from the
+# sourced distribution. rclpy is not assumed to be available on PyPI:
+rosdep install --from-paths . --ignore-src -r -y
+
+# In ROS 2, the canonical runtime is started through the Aegis CLI:
+aegis start --config config/aegis.yaml
+```
+
+The offline commands are useful for validation and automation:
+
+```bash
+aegis check --config config/aegis.yaml
+aegis status --config config/aegis.yaml
+aegis events --config config/aegis.yaml
+```
+
+`aegis check` performs one read-only reconciliation. It exits `0` only when
+all checks are `OK`; `WARNING` and `ERROR` produce exit code `1`. Add
+`--recover` to explicitly execute matching policies during a one-shot check;
+the long-running `aegis start` loop always runs the full recovery cycle.
+
+## Configuration
 
 ```yaml
-# config/example.yaml
-devices:
-  camera:
+apiVersion: aegis/v1
+interval: 1s
+
+checks:
+  camera_topic:
     type: topic
-    topic: /camera/image_raw
-    stale_timeout: 1.0
-    expected_rate: 30.0
+    target: /camera/image_raw
+    stale_timeout: 2s
+    expected_rate: 30
+
+  camera_node:
+    type: node
+    target: /camera_node
+
+  cpu:
+    type: resource
+    target: cpu
+    warning_threshold: 80
+    error_threshold: 95
+
+policies:
+  - name: restart-camera-when-stale
+    when:
+      check: camera_topic
+      field: stale_age
+      operator: ">"
+      value: 2s
+    then:
+      type: restart_node
+      target: /camera_node
+      command: ["ros2", "lifecycle", "set", "{target}", "restart"]
+
+dependencies:
+  detector_node: [camera_topic]
+  tracking_node: [detector_node]
 ```
 
-### 启动
+The expression form is also supported:
 
-```bash
-ros2 run ros2_device_watchdog watchdog
-# 或指定配置文件：
-# ros2 run ros2_device_watchdog watchdog --config-path /path/to/config.yaml
+```yaml
+when: "camera_topic.stale_age > 2s"
+then: restart node /camera_node
 ```
 
-### 看状态
+Actions are edge-triggered by default. A policy fires once while its
+condition remains true, so a dead camera does not create one recovery alarm
+per timer tick. Set `repeat: true` and a `cooldown` when bounded retries are
+desired. Failed actions become eligible again after their cooldown.
 
-通过 `ros2 diagnostic` 命令查看：
+Recovery commands are explicit argument lists. Aegis rejects string commands
+by default, so YAML interpolation cannot become a shell injection. A deployment
+that truly needs shell syntax must set `unsafe_shell: true` and should isolate
+that action behind a reviewed allowlist and least-privilege service. If a node
+or launch has no configured command, Aegis reports a failed recovery rather
+than guessing how that robot starts processes. Set `recovery.dry_run: true`
+while validating a deployment.
 
-```bash
-ros2 diagnostic
-```
+## Dependency awareness
 
-或在 ROS2 日志中看到类似输出：
+Dependencies use the form `dependent: [prerequisite]`. When `camera_topic`
+fails, Aegis can mark `detector_node` and `tracking_node` unavailable while
+retaining `camera_topic` as the root cause. The event stream consequently
+contains one actionable root-cause transition and a small number of derived
+availability events instead of an alarm storm.
 
-```
-2026-08-10 10:00:00 [INFO] camera: OK -> WARN
-2026-08-10 10:00:02 [INFO] camera: WARN -> ERROR
-2026-08-10 10:00:05 [INFO] camera: ERROR -> RECOVERING
-2026-08-10 10:00:10 [INFO] camera: RECOVERING -> OK
-```
+## Architecture
 
-## 参数说明
+| Layer | Responsibility |
+| --- | --- |
+| `aegis-core` | reconciliation loop and health state |
+| collectors | topic/node/process/hardware/resource observations |
+| policy engine | declarative condition matching and decision deduplication |
+| recovery manager | bounded, injectable action execution |
+| event system | transitions, root causes, recovery history, persistence |
+| ROS adapter | graph discovery, topic subscriptions, ROS timer integration |
 
-### stale_timeout
-
-超过多久没有收到消息，判定为异常。
-
-- `stale_timeout: 1.0` — 超过 1 秒无消息就 WARN
-- 如果 Topic 完全断了（收不到任何消息），会直接 ERROR
-
-### expected_rate
-
-期望的 Topic 频率（Hz）。
-
-- `expected_rate: 30.0` — 期望 30 Hz
-- 如果实际频率低于期望值的 70%，判定为 WARN
-- 多出的 30% 余量是为了防止边界情况频繁跳动
-
-### WARN 和 ERROR 的区别
-
-| 状态 | 含义 | 触发条件 |
-|------|------|----------|
-| OK | 正常 | 消息新鲜，频率正常 |
-| WARN | 警告 | 消息超时 或 频率偏低 |
-| ERROR | 错误 | Topic/Node 不存在，或 WARN 持续未恢复 |
-| RECOVERING | 恢复中 | 连续失败达到上限，准备执行恢复 |
-
-### 为什么 recovery 默认不自动重启进程
-
-第一版默认使用 NoOp 恢复策略，不做任何自动恢复操作。
-
-原因：
-- 自动重启可能掩盖真正的问题（驱动 bug、硬件故障）
-- `kill -9`、`reboot` 等操作有数据丢失风险
-- 不同场景的恢复策略差异很大，不适合一刀切
-
-你可以通过继承 `RecoveryStrategy` 来实现自己的恢复逻辑（见下方扩展部分）。
-
-## 扩展指南
-
-| 你想做什么 | 改哪个文件 |
-|-----------|-----------|
-| 新增设备检测逻辑 | `monitor.py` |
-| 修改状态模型 | `models.py` |
-| 新增 Recovery Strategy | `recovery/` 目录下新建文件 |
-| 修改 YAML 配置格式 | `config.py` |
-| 修改 ROS diagnostics 输出 | `diagnostics.py` |
-| 修改 ROS Node 行为 | `node.py` |
-
-### 自定义 Recovery Strategy
-
-```python
-from ros2_device_watchdog.recovery.base import RecoveryStrategy
-
-class MyRecovery(RecoveryStrategy):
-    async def recover(self, device_name: str) -> bool:
-        # 你的恢复逻辑
-        # 例如：重启某个 ROS2 node
-        return True
-```
-
-然后在 `node.py` 中使用：
-
-```python
-from .recovery import MyRecovery
-# ...
-recovery = MyRecovery()
-```
-
-## Troubleshooting
-
-### 一直显示 Topic Missing
-
-1. 确认 Topic 确实存在：`ros2 topic list | grep <topic_name>`
-2. 确认 Topic 有数据发布：`ros2 topic hz <topic_name>`
-3. 检查 YAML 中的 `topic` 名称是否拼写正确
-4. 检查 ROS2 网络（如果是多机部署）
-
-### expected_rate 设多少合适
-
-- 摄像头：通常等于帧率（15/30/60 Hz）
-- 状态信息：通常 1-20 Hz
-- 建议先观察实际频率，然后设为实际值或略低
-
-### 为什么 camera 会 WARN 但仍有数据
-
-WARN 通常意味着消息还在到达，但频率不够。可能的原因：
-- 摄像头帧率确实降低了
-- 网络延迟导致消息堆积
-- 系统负载高导致处理延迟
-
-### recovery 为什么没有自动重启
-
-默认配置使用 NoOp 恢复策略，不会执行任何恢复操作。这是设计决定，详见上方说明。如需自动恢复，请自行实现 `RecoveryStrategy`。
+Aegis has one supported executable, `aegis`, and one supported Python package,
+`aegis`. ROS 2 deployments should use `aegis start` so the same configuration
+and recovery policy are exercised in development and production.
