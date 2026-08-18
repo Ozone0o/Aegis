@@ -31,5 +31,5 @@ jobs:
         run: |
           python -m build
           python -m venv /tmp/aegis-wheel-smoke
-          /tmp/aegis-wheel-smoke/bin/pip install --no-deps dist/aegis-*.whl
+          /tmp/aegis-wheel-smoke/bin/pip install dist/aegis-*.whl
           /tmp/aegis-wheel-smoke/bin/aegis --help
